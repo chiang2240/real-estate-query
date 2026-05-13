@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>台灣房價查詢</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Noto Sans TC", system-ui, sans-serif; background: #f0f2f5; color: #1a1a2e; min-height: 100vh; }
+  header { background: #16213e; color: #fff; padding: 18px 24px; display: flex; align-items: center; gap: 12px; }
+  header h1 { font-size: 1.25rem; font-weight: 700; letter-spacing: .04em; }
+  .badge { background: #e94560; color: #fff; border-radius: 4px; font-size: .7rem; padding: 2px 7px; }
+  main { max-width: 1100px; margin: 28px auto; padding: 0 16px; display: grid; gap: 20px; }
+  .card { background: #fff; border-radius: 12px; padding: 20px 24px; box-shadow: 0 2px 8px rgba(0,0,0,.07); }
+  h2 { font-size: 1rem; font-weight: 600; margin-bottom: 14px; color: #16213e; }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 18px; }
+  .tab-btn { padding: 7px 16px; border: 2px solid #ddd; background: #fff; border-radius: 8px; cursor: pointer; font-size: .88rem; transition: all .15s; }
+  .tab-btn.active { border-color: #e94560; background: #e94560; color: #fff; }
+  .form-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  .form-group { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 180px; }
+  label { font-size: .82rem; color: #555; }
+  input, select { padding: 8px 12px; border: 1px solid #ccc; border-radius: 8px; font-size: .9rem; outline: none; width: 100%; }
+  input:focus { border-color: #e94560; }
+  .btn { padding: 9px 20px; background: #e94560; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: .9rem; white-space: nowrap; transition: background .15s; }
+  .btn:hover { background: #c73652; }
+  .btn-outline { background: #fff; color: #e94560; border: 2px solid #e94560; }
+  .btn-outline:hover { background: #e94560; color: #fff; }
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .stat { background: #f7f8fa; border-radius: 10px; padding: 14px 16px; text-align: center; }
+  .stat-label { font-size: .75rem; color: #777; margin-bottom: 4px; }
+  .stat-value { font-size: 1.35rem; font-weight: 700; color: #e94560; }
+  .stat-unit { font-size: .72rem; color: #999; }
+  table { width: 100%; border-collapse: collapse; font-size: .83rem; }
+  th { background: #f0f2f5; padding: 9px 10px; text-align: left; color: #555; font-weight: 600; position: sticky; top: 0; }
+  td { padding: 8px 10px; border-bottom: 1px solid #f0f0f0; }
+  tr:hover td { background: #fef6f7; }
+  .table-wrap { overflow-x: auto; max-height: 400px; overflow-y: auto; }
+  .chart-wrap { position: relative; height: 280px; }
+  .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 620px) { .compare-grid { grid-template-columns: 1fr; } }
+  .compare-side h3 { font-size: .92rem; font-weight: 600; color: #16213e; margin-bottom: 10px; }
+  #error-msg { color: #e94560; font-size: .88rem; padding: 8px 0; display: none; }
+  #loading { display: none; color: #888; font-size: .88rem; padding: 8px 0; }
+  .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+  <h1>台灣房價查詢</h1>
+  <span class="badge">實價登錄</span>
+</header>
+<main>
+  <!-- 查詢面板 -->
+  <div class="card">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="nearby">近期成交</button>
+      <button class="tab-btn" data-tab="stats">行政區統計</button>
+      <button class="tab-btn" data-tab="compare">比較兩區</button>
+      <button class="tab-btn" data-tab="community">社區搜尋</button>
+    </div>
+
+    <!-- 近期成交 -->
+    <div class="tab-panel" id="panel-nearby">
+      <div class="form-row">
+        <div class="form-group"><label>地址 / 行政區</label><input id="nearby-addr" placeholder="例：台北市大安區" /></div>
+        <div class="form-group" style="max-width:100px"><label>筆數</label><select id="nearby-limit"><option>15</option><option>30</option><option>50</option></select></div>
+        <button class="btn" onclick="doNearby()">查詢</button>
+      </div>
+    </div>
+
+    <!-- 行政區統計 -->
+    <div class="tab-panel hidden" id="panel-stats">
+      <div class="form-row">
+        <div class="form-group"><label>地址 / 行政區</label><input id="stats-addr" placeholder="例：新北市板橋區" /></div>
+        <button class="btn" onclick="doStats()">統計</button>
+      </div>
+    </div>
+
+    <!-- 比較兩區 -->
+    <div class="tab-panel hidden" id="panel-compare">
+      <div class="form-row">
+        <div class="form-group"><label>地區一</label><input id="cmp-addr1" placeholder="例：台北市信義區" /></div>
+        <div class="form-group"><label>地區二</label><input id="cmp-addr2" placeholder="例：台北市大安區" /></div>
+        <button class="btn" onclick="doCompare()">比較</button>
+      </div>
+    </div>
+
+    <!-- 社區搜尋 -->
+    <div class="tab-panel hidden" id="panel-community">
+      <div class="form-row">
+        <div class="form-group"><label>縣市</label><input id="comm-city" placeholder="例：新北市" /></div>
+        <div class="form-group"><label>社區 / 大樓名稱</label><input id="comm-keyword" placeholder="例：富綠旺" /></div>
+        <button class="btn" onclick="doCommunity()">搜尋</button>
+      </div>
+    </div>
+
+    <div id="loading">載入中…</div>
+    <div id="error-msg"></div>
+  </div>
+
+  <!-- 結果區 -->
+  <div class="card hidden" id="result-stats">
+    <h2 id="stats-title">行政區統計</h2>
+    <div class="stats-grid" id="stats-boxes"></div>
+    <div class="actions">
+      <button class="btn btn-outline" onclick="exportCSV()">匯出 CSV</button>
+    </div>
+  </div>
+
+  <div class="card hidden" id="result-compare">
+    <h2>比較結果</h2>
+    <div class="compare-grid" id="compare-boxes"></div>
+  </div>
+
+  <div class="card hidden" id="result-table">
+    <h2 id="table-title">成交案例</h2>
+    <div class="table-wrap">
+      <table id="records-table"><thead></thead><tbody></tbody></table>
+    </div>
+    <div class="actions">
+      <button class="btn btn-outline" onclick="exportCSV()">匯出 CSV</button>
+    </div>
+  </div>
+</main>
+
+<script>
+let currentAddr = "";
+
+// ── Tab 切換 ─────────────────────────────────────────────────────────────────
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.add("hidden"));
+    btn.classList.add("active");
+    document.getElementById("panel-" + btn.dataset.tab).classList.remove("hidden");
+    hideResults();
+  });
+});
+
+function hideResults() {
+  ["result-stats", "result-compare", "result-table"].forEach(id =>
+    document.getElementById(id).classList.add("hidden")
+  );
+  setError("");
+}
+
+// ── 工具 ──────────────────────────────────────────────────────────────────────
+function setLoading(on) {
+  document.getElementById("loading").style.display = on ? "" : "none";
+}
+function setError(msg) {
+  const el = document.getElementById("error-msg");
+  el.textContent = msg;
+  el.style.display = msg ? "" : "none";
+}
+
+async function apiFetch(url) {
+  setLoading(true);
+  setError("");
+  try {
+    const res = await fetch(url);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "查詢失敗");
+    return data;
+  } catch(e) {
+    setError(e.message);
+    return null;
+  } finally {
+    setLoading(false);
+  }
+}
+
+function renderTable(records, titleEl, id) {
+  if (!records || !records.length) { setError("查無資料"); return; }
+  const wrap = document.getElementById(id);
+  const thead = wrap.querySelector("thead");
+  const tbody = wrap.querySelector("tbody");
+  const keys = Object.keys(records[0]);
+  thead.innerHTML = "<tr>" + keys.map(k => `<th>${k}</th>`).join("") + "</tr>";
+  tbody.innerHTML = records.map(r =>
+    "<tr>" + keys.map(k => `<td>${r[k] ?? ""}</td>`).join("") + "</tr>"
+  ).join("");
+}
+
+function statBox(label, value, unit = "") {
+  return `<div class="stat"><div class="stat-label">${label}</div>
+    <div class="stat-value">${value ?? "—"}</div>
+    ${unit ? `<div class="stat-unit">${unit}</div>` : ""}</div>`;
+}
+
+function showStatsData(data, title) {
+  document.getElementById("stats-title").textContent = title;
+  document.getElementById("stats-boxes").innerHTML = [
+    statBox("統計筆數", data["統計筆數"]),
+    statBox("均價", data["均價(萬/坪)"], "萬/坪"),
+    statBox("最高單價", data["最高單價(萬/坪)"], "萬/坪"),
+    statBox("最低單價", data["最低單價(萬/坪)"], "萬/坪"),
+    statBox("平均總價", data["平均總價(萬)"], "萬"),
+  ].join("");
+  document.getElementById("result-stats").classList.remove("hidden");
+
+  const cases = data["最近成交案例"] || [];
+  if (cases.length) {
+    document.getElementById("table-title").textContent = "最近成交案例";
+    renderTable(cases, null, "records-table");
+    document.getElementById("result-table").classList.remove("hidden");
+  }
+}
+
+// ── 各查詢動作 ────────────────────────────────────────────────────────────────
+async function doNearby() {
+  hideResults();
+  const addr = document.getElementById("nearby-addr").value.trim();
+  const limit = document.getElementById("nearby-limit").value;
+  if (!addr) { setError("請輸入地址"); return; }
+  currentAddr = addr;
+  const data = await apiFetch(`/api/query?address=${encodeURIComponent(addr)}&limit=${limit}`);
+  if (!data) return;
+  document.getElementById("table-title").textContent =
+    `近期成交 — ${data.city}${data.district}（${data.count} 筆）`;
+  renderTable(data.records, null, "records-table");
+  document.getElementById("result-table").classList.remove("hidden");
+}
+
+async function doStats() {
+  hideResults();
+  const addr = document.getElementById("stats-addr").value.trim();
+  if (!addr) { setError("請輸入地址"); return; }
+  currentAddr = addr;
+  const data = await apiFetch(`/api/district-stats?address=${encodeURIComponent(addr)}`);
+  if (!data) return;
+  showStatsData(data, `統計 — ${data["城市"]}${data["行政區"]}`);
+}
+
+async function doCompare() {
+  hideResults();
+  const a1 = document.getElementById("cmp-addr1").value.trim();
+  const a2 = document.getElementById("cmp-addr2").value.trim();
+  if (!a1 || !a2) { setError("請填入兩個地區"); return; }
+  const data = await apiFetch(`/api/compare?address1=${encodeURIComponent(a1)}&address2=${encodeURIComponent(a2)}`);
+  if (!data) return;
+  const keys = Object.keys(data);
+  const boxes = keys.map(key => {
+    const d = data[key];
+    return `<div class="compare-side">
+      <h3>${key}</h3>
+      <div class="stats-grid" style="grid-template-columns:1fr 1fr">
+        ${statBox("均價", d["均價(萬/坪)"], "萬/坪")}
+        ${statBox("最高單價", d["最高單價(萬/坪)"], "萬/坪")}
+        ${statBox("最低單價", d["最低單價(萬/坪)"], "萬/坪")}
+        ${statBox("平均總價", d["平均總價(萬)"], "萬")}
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("compare-boxes").innerHTML = boxes;
+  document.getElementById("result-compare").classList.remove("hidden");
+}
+
+async function doCommunity() {
+  hideResults();
+  const city = document.getElementById("comm-city").value.trim();
+  const kw = document.getElementById("comm-keyword").value.trim();
+  if (!city || !kw) { setError("請輸入縣市與關鍵字"); return; }
+  currentAddr = city;
+  const data = await apiFetch(`/api/community?city=${encodeURIComponent(city)}&keyword=${encodeURIComponent(kw)}`);
+  if (!data) return;
+  document.getElementById("table-title").textContent =
+    `「${kw}」成交紀錄（${data.count} 筆）`;
+  renderTable(data.records, null, "records-table");
+  document.getElementById("result-table").classList.remove("hidden");
+}
+
+// ── CSV 匯出 ──────────────────────────────────────────────────────────────────
+function exportCSV() {
+  if (!currentAddr) return;
+  window.location.href = `/api/export/csv?address=${encodeURIComponent(currentAddr)}&limit=100`;
+}
+
+// ── Enter 觸發查詢 ────────────────────────────────────────────────────────────
+document.querySelectorAll("input").forEach(inp => {
+  inp.addEventListener("keydown", e => {
+    if (e.key !== "Enter") return;
+    const panel = inp.closest(".tab-panel");
+    if (!panel) return;
+    panel.querySelector(".btn")?.click();
+  });
+});
+</script>
+</body>
+</html>

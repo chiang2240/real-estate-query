@@ -13,7 +13,7 @@ import anthropic
 from dotenv import load_dotenv
 
 from geocoding import geocode_address, parse_address
-from lvrs import get_district_stats, get_price_trend, search_transactions
+from lvrs import get_district_stats, search_transactions
 
 load_dotenv()
 
@@ -121,27 +121,6 @@ TOOLS = [
         },
     },
     {
-        "name": "price_trend",
-        "description": (
-            "查詢某行政區近幾季的房價趨勢，了解價格是上漲還是下跌。"
-            "當使用者詢問趨勢、漲跌、近期走向時使用。"
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "address": {
-                    "type": "string",
-                    "description": "行政區，例如：'台北市大安區'",
-                },
-                "seasons": {
-                    "type": "integer",
-                    "description": "查詢季數（預設 4 季，最多 6 季）",
-                },
-            },
-            "required": ["address"],
-        },
-    },
-    {
         "name": "search_by_community",
         "description": (
             "用社區名稱或大樓名稱搜尋實價登錄成交紀錄。"
@@ -187,8 +166,6 @@ def run_tool(tool_name: str, tool_input: dict) -> str:
             return _tool_query_lvrs(tool_input)
         if tool_name == "compare_districts":
             return _tool_compare_districts(tool_input)
-        if tool_name == "price_trend":
-            return _tool_price_trend(tool_input)
         if tool_name == "search_by_community":
             return _tool_search_community(tool_input)
         return json.dumps({"error": f"未知工具：{tool_name}"}, ensure_ascii=False)
@@ -222,16 +199,6 @@ def _tool_compare_districts(inp: dict) -> str:
         f"{city1}{district1}": stats1,
         f"{city2}{district2}": stats2,
     }
-    return json.dumps(result, ensure_ascii=False, default=str)
-
-
-def _tool_price_trend(inp: dict) -> str:
-    address = inp.get("address", "")
-    n_seasons = min(int(inp.get("seasons", 4)), 6)
-    city, district, _ = resolve_address(address)
-    if not city:
-        return json.dumps({"error": "無法識別縣市，請提供更完整的地址（含縣市名）"}, ensure_ascii=False)
-    result = get_price_trend(city, district, n_seasons)
     return json.dumps(result, ensure_ascii=False, default=str)
 
 
