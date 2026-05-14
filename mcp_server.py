@@ -13,7 +13,7 @@ from mcp.server.fastmcp import FastMCP
 
 from crawler import CACHE_DIR
 from geocoding import resolve_address
-from lvrs import CITY_CODES, get_district_stats, search_transactions
+from lvrs import CITY_CODES, get_district_stats, get_price_trend, search_transactions
 
 load_dotenv()
 
@@ -145,6 +145,18 @@ async def search_by_community(city: str, keyword: str) -> str:
         "成交案例數": len(transactions),
         "成交紀錄": transactions,
     }
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@mcp.tool()
+async def price_trend(city: str, district: str = "", keyword: str = "", years: int = 10) -> str:
+    """查詢指定城市／行政區／社區的近 N 年每季房價趨勢（均價、最高、最低）。
+    city: 縣市（如：新北市）。
+    district: 行政區（可選，如：新莊區）。
+    keyword: 社區或門牌關鍵字（可選，如：富綠旺）。
+    years: 查詢年數，預設 10 年。
+    """
+    result = await get_price_trend(city, district=district, keyword=keyword, years=years)
     return json.dumps(result, ensure_ascii=False, default=str)
 
 

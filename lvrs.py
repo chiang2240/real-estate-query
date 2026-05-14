@@ -5,7 +5,9 @@
 
 from typing import Optional
 
-from crawler import LvrsCrawler
+import datetime
+
+from crawler import HistoryCrawler, LvrsCrawler
 from models import DistrictStats
 
 CITY_CODES: dict[str, str] = {
@@ -74,3 +76,35 @@ async def get_district_stats(city: str, district: str) -> dict:
         最近成交案例=transactions[:8],
     )
     return stats.to_display()
+
+
+def _build_seasons(years: int) -> list[str]:
+    roc_now = datetime.date.today().year - 1911
+    seasons = []
+    for y in range(roc_now - years + 1, roc_now + 1):
+        for s in range(1, 5):
+            token = f"{y:03d}S{s}"
+            if token >= "101S1":
+                seasons.append(token)
+    return seasons
+
+
+async def get_price_trend(
+    city: str, district: str = "", keyword: str = "", years: int = 10
+) -> dict:
+    city_code = get_city_code(city)
+    if not city_code:
+        return {"error": f"無法識別縣市：{city}"}
+
+    seasons = _build_seasons(years)
+    crawler = HistoryCrawler(city_code)
+    trend = await crawler.get_trend(seasons, district=district, keyword=keyword)
+
+    return {
+        "城市": city,
+        "行政區": district or "（全區）",
+        "關鍵字": keyword or "",
+        "查詢季別數": len(seasons),
+        "有資料季別數": len(trend),
+        "趨勢數據": trend,
+    }

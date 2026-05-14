@@ -10,6 +10,7 @@ import json
 import os
 import sqlite3
 import time
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -266,3 +267,180 @@ class LvrsCrawler:
         if not self.db_path.exists():
             return []
         return await asyncio.to_thread(_query_db, self.db_path, district, keyword, limit)
+
+
+# ── 歷史季別下載 ──────────────────────────────────────────────────────────────
+
+HISTORY_URL = "https://plvr.land.moi.gov.tw/DownloadSeason"
+HISTORY_INIT_URL = "https://plvr.land.moi.gov.tw/DownloadOpenData"
+
+
+def _history_db_path(city_code: str) -> Path:
+    CACHE_DIR.mkdir(exist_ok=True)
+    return CACHE_DIR / f"{city_code}_history.db"
+
+
+def _init_history_db(db_path: Path) -> None:
+    conn = sqlite3.connect(db_path)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS history (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            season           TEXT,
+            district         TEXT,
+            address          TEXT,
+            area_ping        REAL,
+            total_wan        REAL,
+            unit_price       REAL,
+            transaction_date TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_h_season   ON history(season)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_h_district ON history(district)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_h_address  ON history(address)")
+    conn.commit()
+    conn.close()
+
+
+def _season_cached(db_path: Path, season: str) -> bool:
+    if not db_path.exists():
+        return False
+    conn = sqlite3.connect(db_path)
+    count = conn.execute("SELECT COUNT(*) FROM history WHERE season=?", (season,)).fetchone()[0]
+    conn.close()
+    return count > 0
+
+
+def _write_history(db_path: Path, season: str, rows: list[dict]) -> int:
+    _init_history_db(db_path)
+    records = []
+    for item in rows:
+        if str(item.get("交易標的", "")).strip() in _EXCLUDE_TYPES:
+            continue
+        total_price = _to_float(item.get("總價元"))
+        area_m2 = _to_float(item.get("建物移轉總面積平方公尺"))
+        area_ping = round(area_m2 / 3.30579, 1) if area_m2 else None
+        total_wan = round(total_price / 10000) if total_price else None
+        unit_price = round(total_wan / area_ping, 1) if (total_wan and area_ping) else None
+        records.append((
+            season,
+            str(item.get("鄉鎮市區", "")).strip(),
+            str(item.get("土地位置建物門牌", "")).strip(),
+            area_ping, total_wan, unit_price,
+            _roc_date(item.get("交易年月日", "")),
+        ))
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("DELETE FROM history WHERE season=?", (season,))
+    conn.executemany(
+        "INSERT INTO history (season,district,address,area_ping,total_wan,unit_price,transaction_date) "
+        "VALUES (?,?,?,?,?,?,?)",
+        records,
+    )
+    conn.commit()
+    conn.close()
+    return len(records)
+
+
+def _query_trend(db_path: Path, seasons: list[str], district: str, keyword: str) -> list[dict]:
+    conn = sqlite3.connect(db_path)
+    placeholders = ",".join("?" * len(seasons))
+    where = [f"season IN ({placeholders})"]
+    params: list = list(seasons)
+    if district:
+        where.append("district LIKE ?")
+        params.append(f"%{district}%")
+    if keyword:
+        where.append("address LIKE ?")
+        params.append(f"%{keyword}%")
+
+    rows = conn.execute(f"""
+        SELECT season,
+               COUNT(*)                    AS cnt,
+               ROUND(AVG(unit_price), 1)   AS avg_unit,
+               ROUND(MAX(unit_price), 1)   AS max_unit,
+               ROUND(MIN(unit_price), 1)   AS min_unit,
+               ROUND(AVG(total_wan), 1)    AS avg_total
+        FROM history
+        WHERE {' AND '.join(where)}
+          AND unit_price IS NOT NULL
+        GROUP BY season
+        ORDER BY season
+    """, params).fetchall()
+    conn.close()
+
+    return [
+        {
+            "季別": r[0],
+            "成交筆數": r[1],
+            "均價(萬/坪)": r[2],
+            "最高(萬/坪)": r[3],
+            "最低(萬/坪)": r[4],
+            "平均總價(萬)": r[5],
+        }
+        for r in rows
+    ]
+
+
+class HistoryCrawler:
+    """歷史季別資料存取層：下載 ZIP → 解析目標城市 CSV → SQLite。"""
+
+    def __init__(self, city_code: str):
+        self.city_code = city_code.upper()
+        self.db_path = _history_db_path(self.city_code)
+        self._timeout = httpx.Timeout(timeout=None, connect=5.0, read=60.0)
+
+    async def ensure_seasons(self, seasons: list[str]) -> None:
+        missing = [s for s in seasons if not _season_cached(self.db_path, s)]
+        if not missing:
+            return
+        # 初始化 session（實價登錄需先訪問主頁才能下載歷史資料）
+        async with httpx.AsyncClient(verify=_VERIFY_SSL, timeout=self._timeout) as client:
+            await client.get(HISTORY_INIT_URL)
+            for season in missing:
+                await self._download_season(client, season)
+
+    async def _download_season(self, client: httpx.AsyncClient, season: str) -> int:
+        csv_name = f"{self.city_code.lower()}_lvr_land_a.csv"
+        for attempt in range(3):
+            try:
+                resp = await client.get(
+                    HISTORY_URL,
+                    params={"season": season, "type": "zip", "fileName": "lvr_landcsv.zip"},
+                )
+                resp.raise_for_status()
+                if resp.content[:2] != b"PK":
+                    print(f"  [{season} 回應非 ZIP，跳過]")
+                    return 0
+
+                z = zipfile.ZipFile(io.BytesIO(resp.content))
+                if csv_name not in z.namelist():
+                    print(f"  [{season} ZIP 內無 {csv_name}]")
+                    return 0
+
+                text = z.read(csv_name).decode("utf-8-sig")
+                lines = text.splitlines()
+                if len(lines) < 3:
+                    return 0
+
+                reader = csv.DictReader(io.StringIO("\n".join([lines[0]] + lines[2:])))
+                count = await asyncio.to_thread(_write_history, self.db_path, season, list(reader))
+                print(f"  [歷史 {self.city_code} {season}：{count} 筆]")
+                return count
+
+            except (httpx.TimeoutException, httpx.NetworkError) as e:
+                if attempt < 2:
+                    await asyncio.sleep(1)
+                else:
+                    print(f"  [歷史下載失敗 {season}：{e}]")
+            except Exception as e:
+                print(f"  [歷史下載失敗 {season}：{e}]")
+                break
+        return 0
+
+    async def get_trend(
+        self, seasons: list[str], district: str = "", keyword: str = ""
+    ) -> list[dict]:
+        await self.ensure_seasons(seasons)
+        if not self.db_path.exists():
+            return []
+        return await asyncio.to_thread(_query_trend, self.db_path, seasons, district, keyword)
