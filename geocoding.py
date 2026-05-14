@@ -1,6 +1,7 @@
 import re
-import requests
 from typing import Optional
+
+import httpx
 
 
 CITY_PATTERN = re.compile(
@@ -17,7 +18,7 @@ def geocode_address(address: str, api_key: str) -> Optional[dict]:
     params = {"address": address, "key": api_key, "language": "zh-TW", "region": "TW"}
 
     try:
-        resp = requests.get(url, params=params, timeout=10)
+        resp = httpx.get(url, params=params, timeout=10)
         data = resp.json()
 
         if data.get("status") != "OK" or not data.get("results"):
@@ -58,3 +59,13 @@ def parse_address(address: str) -> tuple[str, str]:
             district = candidate
             break
     return city, district
+
+
+def resolve_address(address: str, api_key: str = "") -> tuple[str, str, str]:
+    """回傳 (city, district, formatted_address)。優先用 Google Maps，fallback 用 regex。"""
+    if api_key:
+        loc = geocode_address(address, api_key)
+        if loc:
+            return loc.get("city", ""), loc.get("district", ""), loc.get("formatted_address", address)
+    city, district = parse_address(address)
+    return city, district, address
